@@ -6,9 +6,11 @@ from bs4 import BeautifulSoup
 import json
 import time
 import re
+import os
 from io import BytesIO
 from datetime import datetime
 from statistics import mode, StatisticsError
+from pathlib import Path
 
 # ─── Color Palette ───────────────────────────────────────────────────────────
 # Primary: #2563EB | Primary Hover: #1D4ED8 | Secondary: #06B6D4
@@ -131,6 +133,12 @@ st.markdown("""
         border-color: #1D4ED8 !important;
     }
 
+    /* Radio button and label text visibility */
+    .stRadio label, .stRadio div[role="radiogroup"] label,
+    .stSelectbox label, .stTextInput label {
+        color: #0F172A !important;
+    }
+
     /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
         gap: 0;
@@ -225,6 +233,26 @@ def location_to_slug(name):
     return slug
 
 
+# ─── Sample Data (fallback when cloud scraping is blocked) ───────────────────
+SAMPLE_DATA_PATH = Path(__file__).parent / "sample_data.json"
+
+
+@st.cache_data(ttl=3600)
+def load_sample_data():
+    if SAMPLE_DATA_PATH.exists():
+        with open(SAMPLE_DATA_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def get_sample_listings(area_slug):
+    samples = load_sample_data()
+    if area_slug in samples:
+        entry = samples[area_slug]
+        return entry["listings"], entry["total"], entry["label"]
+    return [], 0, area_slug.replace("-", " ").title()
+
+
 # ─── Scraper ─────────────────────────────────────────────────────────────────
 BROWSER_PROFILES = ["chrome", "chrome110", "chrome116", "chrome120", "edge101"]
 
@@ -313,6 +341,11 @@ def scrape_speedhome(area_slug, max_pages=10):
         except Exception as e:
             st.warning(f"Error fetching page {page_num}: {str(e)}")
             break
+
+    if not all_listings:
+        sample_listings, sample_total, sample_label = get_sample_listings(area_slug)
+        if sample_listings:
+            return sample_listings, sample_total, sample_label
 
     return all_listings, total_elements, area_label
 
