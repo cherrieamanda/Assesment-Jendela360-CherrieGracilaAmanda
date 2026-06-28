@@ -226,48 +226,71 @@ def location_to_slug(name):
 
 
 # ─── Scraper ─────────────────────────────────────────────────────────────────
-BROWSER_PROFILES = [
-    "chrome", "chrome110", "chrome116", "chrome120",
-    "edge101", "safari15_5", "safari17_0",
-]
+BROWSER_PROFILES = ["chrome", "chrome110", "chrome116", "chrome120", "edge101"]
 
 
-def fetch_with_retries(url, max_retries=3):
+def get_build_id():
+    """Fetch the Next.js buildId needed for the _next/data API."""
+    for profile in BROWSER_PROFILES:
+        try:
+            session = curl_requests.Session(impersonate=profile)
+            resp = session.get("https://speedhome.com/rent/kuala-lumpur", timeout=20)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "lxml")
+                next_data = soup.find("script", id="__NEXT_DATA__")
+                if next_data:
+                    return json.loads(next_data.string).get("buildId", "")
+        except Exception:
+            continue
+    return ""
+
+
+def fetch_json(url, max_retries=3):
+    """Fetch JSON from _next/data endpoint with retry across browser profiles."""
     for attempt in range(max_retries):
         profile = BROWSER_PROFILES[attempt % len(BROWSER_PROFILES)]
         try:
             session = curl_requests.Session(impersonate=profile)
             resp = session.get(url, timeout=25)
             if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, "lxml")
-                next_data = soup.find("script", id="__NEXT_DATA__")
-                if next_data:
-                    return resp, soup, next_data
-            time.sleep(2)
+                return resp.json()
+            time.sleep(1.5)
         except Exception:
-            time.sleep(2)
-    return None, None, None
+            time.sleep(1.5)
+    return None
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_build_id():
+    return get_build_id()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def scrape_speedhome(area_slug, max_pages=10):
+    build_id = get_cached_build_id()
+    if not build_id:
+        return [], 0, area_slug.replace("-", " ").title()
+
     all_listings = []
     total_elements = 0
     area_label = area_slug.replace("-", " ").title()
 
     for page_num in range(1, max_pages + 1):
         if page_num == 1:
-            url = f"https://speedhome.com/rent/{area_slug}"
+            url = f"https://speedhome.com/_next/data/{build_id}/rent/{area_slug}.json"
         else:
-            url = f"https://speedhome.com/rent/{area_slug}?page={page_num}"
+            url = f"https://speedhome.com/_next/data/{build_id}/rent/{area_slug}.json?page={page_num}"
 
         try:
-            _, _, next_data = fetch_with_retries(url)
-            if not next_data:
+            data = fetch_json(url)
+            if not data:
+                if page_num == 1:
+                    # Fallback: try HTML scraping
+                    all_listings, total_elements, area_label = _scrape_html_fallback(area_slug, max_pages)
+                    return all_listings, total_elements, area_label
                 break
 
-            data = json.loads(next_data.string)
-            props = data.get("props", {}).get("pageProps", {})
+            props = data.get("pageProps", {})
             prop_list = props.get("propertyList", {})
             content = prop_list.get("content", [])
 
@@ -285,11 +308,62 @@ def scrape_speedhome(area_slug, max_pages=10):
             if prop_list.get("last", True):
                 break
 
-            time.sleep(2)
+            time.sleep(1.5)
 
         except Exception as e:
             st.warning(f"Error fetching page {page_num}: {str(e)}")
             break
+
+    return all_listings, total_elements, area_label
+
+
+def _scrape_html_fallback(area_slug, max_pages=10):
+    """Fallback: scrape HTML page directly if JSON API fails."""
+    all_listings = []
+    total_elements = 0
+    area_label = area_slug.replace("-", " ").title()
+
+    for page_num in range(1, max_pages + 1):
+        if page_num == 1:
+            url = f"https://speedhome.com/rent/{area_slug}"
+        else:
+            url = f"https://speedhome.com/rent/{area_slug}?page={page_num}"
+
+        for profile in BROWSER_PROFILES:
+            try:
+                session = curl_requests.Session(impersonate=profile)
+                resp = session.get(url, timeout=25)
+                if resp.status_code != 200:
+                    continue
+
+                soup = BeautifulSoup(resp.text, "lxml")
+                next_data = soup.find("script", id="__NEXT_DATA__")
+                if not next_data:
+                    continue
+
+                data = json.loads(next_data.string)
+                props = data.get("props", {}).get("pageProps", {})
+                prop_list = props.get("propertyList", {})
+                content = prop_list.get("content", [])
+
+                if not content:
+                    return all_listings, total_elements, area_label
+
+                if page_num == 1:
+                    total_elements = prop_list.get("totalElements", 0)
+                    meta = props.get("enhancedMetaData", {})
+                    if meta.get("area"):
+                        area_label = meta["area"]
+
+                all_listings.extend(content)
+
+                if prop_list.get("last", True):
+                    return all_listings, total_elements, area_label
+
+                time.sleep(2)
+                break
+            except Exception:
+                continue
 
     return all_listings, total_elements, area_label
 
