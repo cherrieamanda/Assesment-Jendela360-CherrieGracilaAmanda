@@ -627,8 +627,7 @@ if "results" in st.session_state:
         <div class="info-box">
             <strong>Not Available:</strong> SPEEDHOME does not offer daily rental listings.
             SPEEDHOME is a platform focused on <strong>monthly and yearly</strong> tenancy agreements
-            (minimum rental duration is typically 6–12 months).<br><br>
-            For daily rentals, consider platforms like Airbnb, Booking.com, or Agoda.
+            (minimum rental duration is typically 6–12 months).
         </div>
         """, unsafe_allow_html=True)
 
