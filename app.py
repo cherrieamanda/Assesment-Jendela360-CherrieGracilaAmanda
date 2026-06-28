@@ -226,9 +226,31 @@ def location_to_slug(name):
 
 
 # ─── Scraper ─────────────────────────────────────────────────────────────────
+BROWSER_PROFILES = [
+    "chrome", "chrome110", "chrome116", "chrome120",
+    "edge101", "safari15_5", "safari17_0",
+]
+
+
+def fetch_with_retries(url, max_retries=3):
+    for attempt in range(max_retries):
+        profile = BROWSER_PROFILES[attempt % len(BROWSER_PROFILES)]
+        try:
+            session = curl_requests.Session(impersonate=profile)
+            resp = session.get(url, timeout=25)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "lxml")
+                next_data = soup.find("script", id="__NEXT_DATA__")
+                if next_data:
+                    return resp, soup, next_data
+            time.sleep(2)
+        except Exception:
+            time.sleep(2)
+    return None, None, None
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def scrape_speedhome(area_slug, max_pages=10):
-    session = curl_requests.Session(impersonate="chrome")
     all_listings = []
     total_elements = 0
     area_label = area_slug.replace("-", " ").title()
@@ -240,12 +262,7 @@ def scrape_speedhome(area_slug, max_pages=10):
             url = f"https://speedhome.com/rent/{area_slug}?page={page_num}"
 
         try:
-            resp = session.get(url, timeout=20)
-            if resp.status_code != 200:
-                break
-
-            soup = BeautifulSoup(resp.text, "lxml")
-            next_data = soup.find("script", id="__NEXT_DATA__")
+            _, _, next_data = fetch_with_retries(url)
             if not next_data:
                 break
 
@@ -268,7 +285,7 @@ def scrape_speedhome(area_slug, max_pages=10):
             if prop_list.get("last", True):
                 break
 
-            time.sleep(1.5)
+            time.sleep(2)
 
         except Exception as e:
             st.warning(f"Error fetching page {page_num}: {str(e)}")
